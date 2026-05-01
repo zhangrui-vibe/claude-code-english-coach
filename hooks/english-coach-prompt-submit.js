@@ -44,7 +44,7 @@ const MIN_AGENT_MARKER_COUNT = 2;
 // includes punctuation, so substring matching is precise enough without word
 // boundaries (and \b can't anchor against ":" or "—" anyway). Extend
 // cautiously — additions here are user-visible behavior changes.
-const AGENT_PATTERN_MARKERS = /(My recommendation:|Which path do you want|trade-?off:|leave [\w_-]+ false|Want me to|Push into Phase|wrapped —|guarded behind|burns? \w+ tokens?)/i;
+const AGENT_PATTERN_MARKERS = /(My recommendation:|Which path do you want|trade-?off:|leave \S+ false|Want me to|Push into Phase|wrapped —|guarded behind|burns? \w+ tokens?)/i;
 
 function codeBlockRatio(text) {
   const fenceMatches = [...text.matchAll(/```[\s\S]*?```/g)];
@@ -63,8 +63,10 @@ function blockquoteRatio(text) {
 function agentMarkerCount(text) {
   const re = new RegExp(AGENT_PATTERN_MARKERS.source, "gi");
   const distinct = new Set();
+  // Use m[0] (the full match) for dedup so adding inner capture groups to
+  // AGENT_PATTERN_MARKERS in the future does not silently break this counter.
   for (const m of text.matchAll(re)) {
-    distinct.add(m[1].toLowerCase());
+    distinct.add(m[0].toLowerCase());
   }
   return distinct.size;
 }

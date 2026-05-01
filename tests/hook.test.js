@@ -169,6 +169,16 @@ const tests = [
       prompt: "yo, my recommendation: let's just push this through tomorrow morning and see what breaks"
     },
     expect: "emit"
+  },
+  // Polish (post-review): verify "leave X: false" with a colon is matched by
+  // the relaxed marker pattern — was missed by the stricter \w_- character
+  // class. Combined with "My recommendation:", count reaches >=2 -> skip.
+  {
+    name: "two markers including 'leave X: false' with colon -> skip",
+    payload: {
+      prompt: "My recommendation: just leave enabled: false in production for now"
+    },
+    expect: "skip"
   }
 ];
 
