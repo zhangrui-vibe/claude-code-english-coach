@@ -10,9 +10,12 @@
 //
 // Skip rules: prompts shorter than 12 characters, fewer than 4 words,
 // containing CJK characters, starting with a slash (slash-command body
-// is not user-authored English), or containing a previously-generated
-// "--- Expression Upgrade" block (recursion / quoting guard) are passed
-// through untouched.
+// is not user-authored English), containing a previously-generated
+// "--- Expression Upgrade" block (recursion / quoting guard), longer
+// than 1500 chars and containing an agent-style phrasing marker
+// (pasted agent prose), or dominated by triple-backtick code fences
+// (>50% by length) or markdown blockquote lines (>30% of non-empty
+// lines) are passed through untouched.
 
 const path = require("path");
 const os = require("os");
@@ -25,6 +28,32 @@ const cjkRegex = /[一-鿿぀-ヿ가-힯]/;
 const MIN_CHARS = 12;
 const MIN_WORDS = 4;
 
+// v2 thresholds: pasted-agent-text and code-/quote-dominance.
+const LONG_PROMPT_CHARS = 1500;
+const CODE_BLOCK_RATIO_THRESHOLD = 0.5;
+const BLOCKQUOTE_RATIO_THRESHOLD = 0.3;
+
+// Phrasing markers that strongly suggest the long text is pasted agent prose
+// rather than the user's own writing. Each marker is a multi-word phrase or
+// includes punctuation, so substring matching is precise enough without word
+// boundaries (and \b can't anchor against ":" or "—" anyway). Extend
+// cautiously — additions here are user-visible behavior changes.
+const AGENT_PATTERN_MARKERS = /(My recommendation:|Which path do you want|trade-?off:|leave [\w_-]+ false|Want me to|Push into Phase|wrapped —|guarded behind|burns? \w+ tokens?)/i;
+
+function codeBlockRatio(text) {
+  const fenceMatches = [...text.matchAll(/```[\s\S]*?```/g)];
+  const inFence = fenceMatches.reduce((sum, m) => sum + m[0].length, 0);
+  return text.length === 0 ? 0 : inFence / text.length;
+}
+
+function blockquoteRatio(text) {
+  const lines = text.split(/\r?\n/);
+  const nonEmpty = lines.filter(l => l.trim().length > 0);
+  if (nonEmpty.length === 0) return 0;
+  const quoted = nonEmpty.filter(l => /^\s*>\s/.test(l)).length;
+  return quoted / nonEmpty.length;
+}
+
 function shouldSkip(prompt) {
   if (!prompt || typeof prompt !== "string") return true;
   const trimmed = prompt.trim();
@@ -35,6 +64,12 @@ function shouldSkip(prompt) {
   if (trimmed.startsWith("/")) return true;
   // Recursion guard: prompt re-quotes a previous coach output.
   if (trimmed.includes("--- Expression Upgrade")) return true;
+  // Long prompt + agent-pattern marker: almost certainly pasted agent prose.
+  if (trimmed.length > LONG_PROMPT_CHARS && AGENT_PATTERN_MARKERS.test(trimmed)) return true;
+  // Code-block-dominant: user is pasting code, not writing English.
+  if (codeBlockRatio(trimmed) > CODE_BLOCK_RATIO_THRESHOLD) return true;
+  // Blockquote-dominant: user is quoting prior text rather than writing their own.
+  if (blockquoteRatio(trimmed) > BLOCKQUOTE_RATIO_THRESHOLD) return true;
   return false;
 }
 
@@ -42,6 +77,7 @@ function buildContext() {
   return [
     "[auto-english-coach] After your main response, append a minimalist '--- Expression Upgrade' section based ONLY on the user's own authored English in the prompt above.",
     "Explicitly ignore quoted/pasted prior agent responses, code blocks, log output, command output, or any embedded '--- Expression Upgrade' sections — coach only what the user themselves wrote.",
+    "Before logging any vocab, internally identify the EXACT substring of the user's authored English (typically a short directive or question, often at the end of the prompt). Every vocab item you log MUST be a word or collocation that appears literally in that substring; if a candidate word is not in the substring, pick a different one from the substring or skip vocab entirely this turn.",
     "If after that exclusion there is no user-authored English worth coaching, produce no Expression Upgrade section.",
     "Otherwise produce: 1) one rewritten sentence combining technical precision with casual Slack-style improvements,",
     "2) 2-3 high-value vocabulary words or collocations,",
