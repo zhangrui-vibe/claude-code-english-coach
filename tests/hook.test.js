@@ -143,6 +143,32 @@ const tests = [
       prompt: "I have been thinking about how we should structure the deployment pipeline for our staging environment and there are several angles to consider here. ".repeat(13)
     },
     expect: "emit"
+  },
+
+  // --- New v3: short pasted-agent paragraphs caught by multi-marker count ---
+  // Smoking-gun reproducer: the verbatim continuous-learning-v2 agent paragraph
+  // the user reported. ~530 chars (under LONG_PROMPT_CHARS=1500), but contains
+  // three distinct markers (My recommendation:, Which path do you want, burns
+  // Haiku tokens). Should skip because of multi-marker presence.
+  {
+    name: "short pasted agent paragraph with multiple markers -> skip",
+    payload: {
+      prompt: [
+        "The observer-enabled mode burns Haiku tokens every 5 minutes analyzing observations. If you don't want background spending, leave enabled: false and rely on manual instinct creation.",
+        "",
+        "My recommendation: B then D. Fix the silent observation-capture failure first (otherwise enabling the analyzer just runs on empty input), then list known projects to confirm the registry. The ROI of full auto-learning is real but only if observations actually land on disk. Which path do you want to take?"
+      ].join("\n")
+    },
+    expect: "skip"
+  },
+  // Regression guard: a single accidental marker in a short user prompt should
+  // NOT trigger skip — only multi-marker prompts do.
+  {
+    name: "short user prompt with single accidental marker -> emit",
+    payload: {
+      prompt: "yo, my recommendation: let's just push this through tomorrow morning and see what breaks"
+    },
+    expect: "emit"
   }
 ];
 
