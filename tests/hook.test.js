@@ -94,6 +94,55 @@ const tests = [
       ].join("\n")
     },
     expect: "skip"
+  },
+
+  // --- New v2: pasted agent text + code-/quote-dominated prompts ---
+  {
+    name: "long prompt with agent-pattern marker -> skip",
+    payload: {
+      prompt: "some context here that goes on for a while. ".repeat(38) + "My recommendation: B then D."
+    },
+    expect: "skip"
+  },
+  {
+    name: "prompt dominated by code block -> skip",
+    payload: {
+      prompt: "what does this do?\n```js\n" + "function example(arg) { return arg + 1; }\n".repeat(20) + "```"
+    },
+    expect: "skip"
+  },
+  {
+    name: "prompt dominated by markdown blockquote -> skip",
+    payload: {
+      prompt: [
+        "> The observer-enabled mode burns Haiku tokens every 5 minutes.",
+        "> If you don't want background spending, leave enabled false.",
+        "> My recommendation: B then D — fix the silent failure first.",
+        "> Then list known projects to confirm the registry.",
+        "> The ROI of full auto-learning is real but only if observations land.",
+        "> Which path do you want to take?",
+        "> Want me to dig into the silent observation-capture failure?",
+        "> Or look at the project-scoped instincts registry instead?",
+        "thoughts?"
+      ].join("\n")
+    },
+    expect: "skip"
+  },
+
+  // --- New v2: regression guards (small code or long user prose still emits) ---
+  {
+    name: "short user question with small code snippet -> emit",
+    payload: {
+      prompt: "can you explain what this snippet does in our context?\n```js\nfoo();\n```"
+    },
+    expect: "emit"
+  },
+  {
+    name: "long user prose without agent markers -> emit",
+    payload: {
+      prompt: "I have been thinking about how we should structure the deployment pipeline for our staging environment and there are several angles to consider here. ".repeat(13)
+    },
+    expect: "emit"
   }
 ];
 
