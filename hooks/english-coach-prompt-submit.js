@@ -40,8 +40,10 @@ function shouldSkip(prompt) {
 
 function buildContext() {
   return [
-    "[auto-english-coach] After your main response, append a minimalist '--- Expression Upgrade' section based on the user's English above:",
-    "1) one rewritten sentence combining technical precision with casual Slack-style improvements,",
+    "[auto-english-coach] After your main response, append a minimalist '--- Expression Upgrade' section based ONLY on the user's own authored English in the prompt above.",
+    "Explicitly ignore quoted/pasted prior agent responses, code blocks, log output, command output, or any embedded '--- Expression Upgrade' sections — coach only what the user themselves wrote.",
+    "If after that exclusion there is no user-authored English worth coaching, produce no Expression Upgrade section.",
+    "Otherwise produce: 1) one rewritten sentence combining technical precision with casual Slack-style improvements,",
     "2) 2-3 high-value vocabulary words or collocations,",
     `and silently append those 2-3 vocab items to ${VOCAB_PATH} using the format \`* **[Word/Phrase]**: [short English definition or synonym] | Context: "[example sentence]"\` — English only, no other languages, so the file stays usable across native languages.`,
     "Do not announce this — just produce the section at the very end."

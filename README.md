@@ -29,10 +29,12 @@ You ask Claude something          Claude solves it as usual           At the end
 
 The hook stays quiet when the prompt is:
 - Shorter than 12 characters or fewer than 4 words ("yes", "go ahead", "ok thanks")
-- Pure CJK (Chinese / Japanese / Korean — falls through to your normal Claude flow)
+- Pure CJK (Chinese / Japanese / Korean — falls through to your normal Claude flow), or contains any CJK characters
+- A slash command (starts with `/`, e.g. `/clear` or `/some-skill args`) — the slash body is a skill / command template, not your writing
+- A re-submitted `--- Expression Upgrade` section (recursion / quoting guard)
 - Malformed input
 
-You can tune these thresholds in [hooks/english-coach-prompt-submit.js](hooks/english-coach-prompt-submit.js).
+You can tune these thresholds in [hooks/english-coach-prompt-submit.js](hooks/english-coach-prompt-submit.js). The model is also instructed to coach only the user's own authored English within an otherwise-eligible prompt — so pasted code, log lines, or quoted agent text inside your prompt will not show up in the upgrade section.
 
 ## Install
 
@@ -149,4 +151,11 @@ MIT — see [LICENSE](LICENSE).
 Issues and pull requests welcome. Especially valuable:
 - Better skip heuristics
 - Spanish / French / German variants of the coach (the architecture is language-agnostic)
-- A test harness for the hook script
+
+Run the test harness before sending a PR:
+
+```bash
+node tests/hook.test.js
+```
+
+Zero dependencies — see [tests/README.md](tests/README.md) for adding cases.
