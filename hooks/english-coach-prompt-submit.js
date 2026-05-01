@@ -8,8 +8,11 @@
 // Cross-platform: uses os.homedir() so the same file works on Windows,
 // macOS, and Linux. No hard-coded paths.
 //
-// Skip rules: prompts shorter than 12 characters, fewer than 4 words, or
-// containing CJK characters are passed through untouched.
+// Skip rules: prompts shorter than 12 characters, fewer than 4 words,
+// containing CJK characters, starting with a slash (slash-command body
+// is not user-authored English), or containing a previously-generated
+// "--- Expression Upgrade" block (recursion / quoting guard) are passed
+// through untouched.
 
 const path = require("path");
 const os = require("os");
@@ -28,6 +31,10 @@ function shouldSkip(prompt) {
   if (trimmed.length < MIN_CHARS) return true;
   if (cjkRegex.test(trimmed)) return true;
   if (trimmed.split(/\s+/).length < MIN_WORDS) return true;
+  // Slash command: the body is a skill/command template, not the user's English.
+  if (trimmed.startsWith("/")) return true;
+  // Recursion guard: prompt re-quotes a previous coach output.
+  if (trimmed.includes("--- Expression Upgrade")) return true;
   return false;
 }
 
