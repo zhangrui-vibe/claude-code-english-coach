@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+
+# Personal vocab logs — never commit accumulated user data
+data/vocab.md
+data/vocab.local.md
+.claude/

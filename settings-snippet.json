@@ -1,0 +1,16 @@
+{
+  "_comment": "Merge this hooks block into ~/.claude/settings.json. If you already have a UserPromptSubmit array, APPEND a new entry; do not replace.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/english-coach-prompt-submit.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
