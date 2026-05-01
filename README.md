@@ -32,6 +32,9 @@ The hook stays quiet when the prompt is:
 - Pure CJK (Chinese / Japanese / Korean — falls through to your normal Claude flow), or contains any CJK characters
 - A slash command (starts with `/`, e.g. `/clear` or `/some-skill args`) — the slash body is a skill / command template, not your writing
 - A re-submitted `--- Expression Upgrade` section (recursion / quoting guard)
+- Long (>1500 chars) and contains agent-style phrasing ("My recommendation:", "Which path do you want", "wrapped —", "guarded behind", etc.) — likely pasted agent output
+- More than 50% inside triple-backtick code blocks — you're pasting code, not writing English
+- More than 30% of non-empty lines start with `> ` — you're quoting prior text
 - Malformed input
 
 You can tune these thresholds in [hooks/english-coach-prompt-submit.js](hooks/english-coach-prompt-submit.js). The model is also instructed to coach only the user's own authored English within an otherwise-eligible prompt — so pasted code, log lines, or quoted agent text inside your prompt will not show up in the upgrade section.
