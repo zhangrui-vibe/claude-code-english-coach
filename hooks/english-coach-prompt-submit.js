@@ -13,9 +13,11 @@
 // is not user-authored English), containing a previously-generated
 // "--- Expression Upgrade" block (recursion / quoting guard), longer
 // than 1500 chars and containing an agent-style phrasing marker
-// (pasted agent prose), or dominated by triple-backtick code fences
-// (>50% by length) or markdown blockquote lines (>30% of non-empty
-// lines) are passed through untouched.
+// (pasted agent prose), containing two or more distinct agent-style
+// phrasing markers regardless of length (short pasted agent paragraph),
+// or dominated by triple-backtick code fences (>50% by length) or
+// markdown blockquote lines (>30% of non-empty lines) are passed
+// through untouched.
 
 const path = require("path");
 const os = require("os");
@@ -32,6 +34,10 @@ const MIN_WORDS = 4;
 const LONG_PROMPT_CHARS = 1500;
 const CODE_BLOCK_RATIO_THRESHOLD = 0.5;
 const BLOCKQUOTE_RATIO_THRESHOLD = 0.3;
+// v3 threshold: a short paragraph with two or more distinct agent-style
+// markers is almost always a paste; one isolated marker in casual user
+// phrasing is plausible and should not skip.
+const MIN_AGENT_MARKER_COUNT = 2;
 
 // Phrasing markers that strongly suggest the long text is pasted agent prose
 // rather than the user's own writing. Each marker is a multi-word phrase or
@@ -54,6 +60,15 @@ function blockquoteRatio(text) {
   return quoted / nonEmpty.length;
 }
 
+function agentMarkerCount(text) {
+  const re = new RegExp(AGENT_PATTERN_MARKERS.source, "gi");
+  const distinct = new Set();
+  for (const m of text.matchAll(re)) {
+    distinct.add(m[1].toLowerCase());
+  }
+  return distinct.size;
+}
+
 function shouldSkip(prompt) {
   if (!prompt || typeof prompt !== "string") return true;
   const trimmed = prompt.trim();
@@ -66,6 +81,8 @@ function shouldSkip(prompt) {
   if (trimmed.includes("--- Expression Upgrade")) return true;
   // Long prompt + agent-pattern marker: almost certainly pasted agent prose.
   if (trimmed.length > LONG_PROMPT_CHARS && AGENT_PATTERN_MARKERS.test(trimmed)) return true;
+  // Short prompt with multiple distinct markers: short pasted agent paragraph.
+  if (agentMarkerCount(trimmed) >= MIN_AGENT_MARKER_COUNT) return true;
   // Code-block-dominant: user is pasting code, not writing English.
   if (codeBlockRatio(trimmed) > CODE_BLOCK_RATIO_THRESHOLD) return true;
   // Blockquote-dominant: user is quoting prior text rather than writing their own.
