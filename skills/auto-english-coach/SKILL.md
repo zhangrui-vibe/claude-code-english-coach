@@ -26,6 +26,7 @@ Skip silently — produce no upgrade section and write nothing to vocab.md — w
 - A slash command (starts with `/`, e.g. `/clear`, `/some-skill args`) — the body is a skill or command template, not the user's English
 - Re-quotes a previously-generated `--- Expression Upgrade` section (recursion / loop guard)
 - Long (>1500 chars) and contains agent-style phrasing markers ("My recommendation:", "Which path do you want", "wrapped —", "guarded behind", etc.) — almost certainly pasted agent prose
+- Contains two or more distinct agent-style phrasing markers regardless of length — short pasted agent paragraphs (a single marker in casual user phrasing is fine; only multiples skip)
 - More than 50% of the prompt is inside triple-backtick code blocks — the user is pasting code, not writing English
 - More than 30% of the non-empty lines start with markdown blockquote (`> `) — the user is quoting prior text
 - Already idiomatic and short — log nothing rather than padding

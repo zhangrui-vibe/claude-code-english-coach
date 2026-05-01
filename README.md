@@ -33,6 +33,7 @@ The hook stays quiet when the prompt is:
 - A slash command (starts with `/`, e.g. `/clear` or `/some-skill args`) — the slash body is a skill / command template, not your writing
 - A re-submitted `--- Expression Upgrade` section (recursion / quoting guard)
 - Long (>1500 chars) and contains agent-style phrasing ("My recommendation:", "Which path do you want", "wrapped —", "guarded behind", etc.) — likely pasted agent output
+- Contains two or more distinct agent-style markers regardless of length — short pasted agent paragraphs (a single accidental marker in casual user phrasing still emits)
 - More than 50% inside triple-backtick code blocks — you're pasting code, not writing English
 - More than 30% of non-empty lines start with `> ` — you're quoting prior text
 - Malformed input
