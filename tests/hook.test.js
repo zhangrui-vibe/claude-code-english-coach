@@ -1,16 +1,37 @@
-// Test harness for hooks/english-coach-prompt-submit.js
+// Test harness for hooks/english-coach-prompt-submit.js (v6).
 //
-// Pure Node stdlib (no jest/vitest, no node_modules) to match the project's
-// dependency-free stance. Run with:  node tests/hook.test.js
+// v6 contract: DEFAULT-ALLOW for human-typed prompts; skip only on positive
+// evidence the prompt was harness-injected. The hook reads the JSONL transcript
+// at payload.transcript_path and inspects the latest type:"user" entry. Skip
+// signals: isMeta:true (auto-resume), isSidechain:true (subagent execution),
+// userType != "external" (system / non-human), or message.content containing
+// tool_result parts (post-tool continuation).
 //
-// Each test spawns the hook as a child process, pipes a JSON payload to its
-// stdin, and asserts on stdout. An empty stdout means the hook decided to
-// skip; a non-empty stdout means it emitted an additionalContext payload.
+// Pure Node stdlib (no jest/vitest, no node_modules). Run with:
+//   node tests/hook.test.js
+//
+// Each test spawns the hook as a child process, optionally writes a synthetic
+// transcript JSONL fixture under os.tmpdir() and injects its path into the
+// payload, pipes the payload through stdin, and asserts on stdout. An empty
+// stdout means the hook decided to skip; a non-empty stdout means it emitted
+// an additionalContext payload.
 
 const { spawn } = require("child_process");
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
 
 const HOOK = path.join(__dirname, "..", "hooks", "english-coach-prompt-submit.js");
+
+// Write a synthetic transcript JSONL fixture and return its absolute path.
+// Each entry in `entries` is one JSONL line. Sandbox dirs are intentionally
+// not cleaned up so failures are debuggable; the OS recycles them.
+function writeTranscriptFixture(entries) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ecc-hook-tx-"));
+  const p = path.join(dir, "session.jsonl");
+  fs.writeFileSync(p, entries.map(e => JSON.stringify(e)).join("\n") + "\n");
+  return p;
+}
 
 function runHook(payload) {
   return new Promise((resolve, reject) => {
@@ -26,29 +47,11 @@ function runHook(payload) {
   });
 }
 
+// A test entry may include an optional `transcript` array. If present, the
+// harness writes the entries to a temp JSONL and injects transcript_path
+// into the payload before piping it to the hook.
 const tests = [
-  // --- v5 default-deny: ANY prompt without an opt-in marker skips ---
-  // Note: the v2-v4 content heuristics are gone. The hook no longer tries
-  // to guess agent-vs-human from the prompt; instead it skips by default and
-  // emits only when the user explicitly opts in via ":coach " prefix or
-  // " --coach" suffix.
-  {
-    name: "plain English prompt without opt-in -> skip (default-deny)",
-    payload: { prompt: "can you help me wire up the deploy job for staging" },
-    expect: "skip"
-  },
-  {
-    name: "long English prompt without opt-in -> skip",
-    payload: {
-      prompt: "I have been thinking about how we should structure the deployment pipeline for our staging environment and there are several angles to consider here. ".repeat(13)
-    },
-    expect: "skip"
-  },
-  {
-    name: "slash command without opt-in -> skip",
-    payload: { prompt: "/everything-claude-code:tdd-workflow please do X" },
-    expect: "skip"
-  },
+  // === Sanity rules — apply regardless of transcript ===
   {
     name: "empty payload -> skip",
     payload: {},
@@ -59,90 +62,143 @@ const tests = [
     payload: "not json{{{",
     expect: "skip"
   },
-
-  // --- v5 default-deny: regression cases that v2-v4 cared about all skip
-  // automatically now, no special rule needed ---
   {
-    name: "smoking-gun heartbeat agent ping without opt-in -> skip",
-    payload: { prompt: "Heartbeat 10: 3/96 still. 10 min on RB888/3min cell. Holding pattern. Still waiting on your call between A/B/C/D." },
+    name: "short prompt under 12 chars -> skip",
+    payload: { prompt: "yes do it" },
     expect: "skip"
   },
   {
-    name: "smoking-gun continuous-learning agent paragraph without opt-in -> skip",
+    name: "fewer than 4 words -> skip",
+    payload: { prompt: "this is fine" },
+    expect: "skip"
+  },
+  {
+    name: "pure CJK -> skip",
+    payload: { prompt: "帮我把部署接好这件事情" },
+    expect: "skip"
+  },
+  {
+    name: "mixed CJK+English -> skip",
+    payload: { prompt: "please 帮我 review the deploy script for staging" },
+    expect: "skip"
+  },
+  {
+    name: "recursion guard: prompt re-quotes a previous Expression Upgrade -> skip",
     payload: {
       prompt: [
-        "The observer-enabled mode burns Haiku tokens every 5 minutes analyzing observations. If you don't want background spending, leave enabled: false and rely on manual instinct creation.",
+        "see this previous reply for context:",
         "",
-        "My recommendation: B then D. Fix the silent observation-capture failure first, then list known projects to confirm the registry. Which path do you want to take?"
+        "--- Expression Upgrade",
+        "* Better phrasing: ship the deploy",
+        "* Key vocab logged: ship, deploy, staging"
       ].join("\n")
     },
     expect: "skip"
   },
-  {
-    name: "code-block-dominant prompt without opt-in -> skip",
-    payload: { prompt: "what does this do?\n```js\n" + "function example(arg) { return arg + 1; }\n".repeat(20) + "```" },
-    expect: "skip"
-  },
-  {
-    name: "post-compaction auto-resume 'Continue from where you left off.' -> skip",
-    payload: { prompt: "Continue from where you left off." },
-    expect: "skip"
-  },
 
-  // --- v5 opt-in: ":coach " prefix emits coaching for the rest of the prompt ---
+  // === Default-allow when transcript is unavailable ===
   {
-    name: ":coach prefix + English -> emit",
-    payload: { prompt: ":coach can you help me wire up the deploy job for staging" },
+    name: "no transcript_path in payload -> emit (trust the prompt as human)",
+    payload: { prompt: "can you fix the deploy script for staging please" },
     expect: "emit"
   },
   {
-    name: ":COACH prefix is case-insensitive -> emit",
-    payload: { prompt: ":COACH can you help me wire up the deploy job" },
+    name: "transcript_path points to nonexistent file -> emit (default-allow on read error)",
+    payload: {
+      prompt: "can you fix the deploy script for staging please",
+      transcript_path: "/nonexistent/path/that/will/never/exist/session.jsonl"
+    },
     expect: "emit"
   },
   {
-    name: "leading whitespace before :coach is tolerated -> emit",
-    payload: { prompt: "   :coach can you help me wire up the deploy job" },
+    name: "empty transcript file -> emit (no entry to classify; default-allow)",
+    transcript: [],
+    payload: { prompt: "can you fix the deploy script for staging please" },
     expect: "emit"
   },
 
-  // --- v5 opt-in: " --coach" suffix is the alternate trigger ---
+  // === Transcript-driven SKIP cases ===
   {
-    name: "--coach suffix + English -> emit",
-    payload: { prompt: "can you help me wire up the deploy job for staging --coach" },
-    expect: "emit"
+    name: "transcript last user-entry has isMeta=true -> skip (auto-resume)",
+    transcript: [
+      {
+        type: "user",
+        isMeta: true,
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "Continue from where you left off." }] }
+      }
+    ],
+    payload: { prompt: "Continue from where you left off this is a long enough prompt" },
+    expect: "skip"
   },
   {
-    name: "--COACH suffix is case-insensitive, trailing whitespace tolerated -> emit",
-    payload: { prompt: "can you help me wire up the deploy job --COACH   " },
-    expect: "emit"
+    name: "transcript last user-entry has isSidechain=true -> skip (subagent execution)",
+    transcript: [
+      {
+        type: "user",
+        isSidechain: true,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "subagent task content" }] }
+      }
+    ],
+    payload: { prompt: "subagent task content please run this analysis end to end" },
+    expect: "skip"
+  },
+  {
+    name: "transcript last user-entry has userType != external -> skip",
+    transcript: [
+      {
+        type: "user",
+        isSidechain: false,
+        userType: "system",
+        message: { role: "user", content: [{ type: "text", text: "system-generated prompt body" }] }
+      }
+    ],
+    payload: { prompt: "system-generated prompt body that is long enough for sanity rules" },
+    expect: "skip"
+  },
+  {
+    name: "transcript last user-entry has tool_result content -> skip (post-tool continuation)",
+    transcript: [
+      {
+        type: "user",
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_xyz" }] }
+      }
+    ],
+    payload: { prompt: "tool result re-injection text long enough for sanity rules to pass" },
+    expect: "skip"
   },
 
-  // --- v5 sanity rules still apply AFTER stripping the opt-in marker ---
+  // === Transcript-driven EMIT cases ===
   {
-    name: ":coach + CJK body -> skip (CJK rule still applies after strip)",
-    payload: { prompt: ":coach 帮我把 staging 的部署任务接好" },
-    expect: "skip"
+    name: "transcript last user-entry is plain human prompt -> emit",
+    transcript: [
+      {
+        type: "user",
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "fix the deploy script" }] }
+      }
+    ],
+    payload: { prompt: "can you fix the deploy script for staging please" },
+    expect: "emit"
   },
   {
-    name: ":coach + too-short body (<12 chars) -> skip",
-    payload: { prompt: ":coach yes do" },
-    expect: "skip"
-  },
-  {
-    name: ":coach + too-few-words body (<4 words) -> skip",
-    payload: { prompt: ":coach this is fine" },
-    expect: "skip"
-  },
-  {
-    name: ":coach with no body at all -> skip",
-    payload: { prompt: ":coach" },
-    expect: "skip"
-  },
-  {
-    name: ":coach + previously-generated Expression Upgrade -> skip (recursion guard)",
-    payload: { prompt: ":coach --- Expression Upgrade\n* Better phrasing: ship the deploy\n* Key vocab logged: ship, deploy, staging" },
-    expect: "skip"
+    name: "transcript last user-entry has isMeta=false explicitly -> emit",
+    transcript: [
+      {
+        type: "user",
+        isMeta: false,
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "fix the issue" }] }
+      }
+    ],
+    payload: { prompt: "fix the issue with the deploy script for staging please" },
+    expect: "emit"
   }
 ];
 
@@ -150,7 +206,15 @@ async function main() {
   let passed = 0;
   let failed = 0;
   for (const t of tests) {
-    const { code, stdout, stderr } = await runHook(t.payload);
+    let resolvedPayload = t.payload;
+    if (Array.isArray(t.transcript)) {
+      const txPath = writeTranscriptFixture(t.transcript);
+      // payload may be a string (malformed-JSON case) — only inject for object payloads
+      if (resolvedPayload && typeof resolvedPayload === "object") {
+        resolvedPayload = { ...resolvedPayload, transcript_path: txPath };
+      }
+    }
+    const { code, stdout, stderr } = await runHook(resolvedPayload);
     const skipped = stdout.length === 0;
     const got = skipped ? "skip" : "emit";
     const ok = got === t.expect && code === 0;
