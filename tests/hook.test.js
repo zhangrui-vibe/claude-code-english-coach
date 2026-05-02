@@ -199,6 +199,68 @@ const tests = [
     ],
     payload: { prompt: "fix the issue with the deploy script for staging please" },
     expect: "emit"
+  },
+
+  // === v6.1 false-negative reproducers ===
+  // (1) After a tool-using turn, the latest type:"user" entry is a tool_result
+  // re-injection. The user's actual prompt is in an earlier entry. v6 picks
+  // the latest (tool_result) and skips. v6.1 must content-match the prompt to
+  // the earlier text entry and emit.
+  {
+    name: "tool_result entry is latest, but matching prompt is in earlier entry -> emit",
+    transcript: [
+      {
+        type: "user",
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "can you fix the deploy script for staging please" }] }
+      },
+      {
+        type: "user",
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_xyz" }] }
+      }
+    ],
+    payload: { prompt: "can you fix the deploy script for staging please" },
+    expect: "emit"
+  },
+  // (2) The harness fired UserPromptSubmit before transcribing the new prompt;
+  // the latest type:"user" entry is a previous-turn auto-resume (isMeta:true)
+  // whose text doesn't match the current prompt. v6 picks the auto-resume
+  // entry and skips. v6.1 must find no content match -> default-allow -> emit.
+  {
+    name: "latest entry has isMeta:true but text doesn't match current prompt -> emit",
+    transcript: [
+      {
+        type: "user",
+        isMeta: true,
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "Continue from where you left off." }] }
+      }
+    ],
+    payload: { prompt: "what is the next step we should take on the deploy pipeline" },
+    expect: "emit"
+  },
+  // (3) Defensive: the new prompt has no matching entry anywhere in the
+  // transcript (fires-before-write simulation). The only entry present is an
+  // older unrelated prompt with no skip signals. Both v6 and v6.1 should emit
+  // here, but the test pins the behavior so a future regression that uses
+  // "latest entry" with a stale skip signal would be caught.
+  {
+    name: "prompt has no matching transcript entry -> emit (fires-before-write)",
+    transcript: [
+      {
+        type: "user",
+        isMeta: false,
+        isSidechain: false,
+        userType: "external",
+        message: { role: "user", content: [{ type: "text", text: "older prompt body content unrelated" }] }
+      }
+    ],
+    payload: { prompt: "completely different new prompt that the harness has not written yet" },
+    expect: "emit"
   }
 ];
 
