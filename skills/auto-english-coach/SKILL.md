@@ -9,7 +9,7 @@ You are a background English coach.
 
 ## When the hook activates
 
-The hook is **default-allow** for human-typed prompts and **skips only on positive evidence** that the prompt was harness-injected. Detection is structural: the hook reads the JSONL transcript at `payload.transcript_path` and inspects the latest `type:"user"` entry. Skip signals (any one triggers skip):
+The hook is **default-allow** for human-typed prompts and **skips only on positive evidence** that the prompt was harness-injected. Detection is structural: the hook reads the JSONL transcript at `payload.transcript_path` and locates the `type:"user"` entry whose text matches the current prompt (content match — robust against tool_result re-injections and hook-before-write timing). Skip signals (any one triggers skip):
 
 - `isMeta: true` — Claude Code's auto-resume / harness-injected prompt (e.g. "Continue from where you left off.")
 - `isSidechain: true` — subagent execution

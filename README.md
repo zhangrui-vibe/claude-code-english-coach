@@ -27,7 +27,7 @@ You type a prompt                 Claude solves it as usual           At the end
 
 ## How it classifies prompts
 
-The hook reads the JSONL transcript at `payload.transcript_path` (Claude Code injects this on every UserPromptSubmit), tail-scans the last 64 KB for the most recent `type:"user"` entry, and inspects four metadata fields:
+The hook reads the JSONL transcript at `payload.transcript_path` (Claude Code injects this on every UserPromptSubmit), tail-scans the last 64 KB for the `type:"user"` entry whose text matches the current prompt (content match — robust against tool_result re-injections and hook-before-write timing), and inspects four metadata fields:
 
 | Signal | Meaning | Action |
 |---|---|---|
