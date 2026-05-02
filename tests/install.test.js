@@ -206,6 +206,81 @@ async function scenarioInstalledHookRuns() {
   console.log(`  sandbox: ${sandbox}`);
 }
 
+// v6.1: validate that the *installed* hook honors transcript-driven
+// classification end-to-end (not just shouldSkip in isolation).
+// scenarioInstalledHookRuns above only exercises payloads without
+// transcript_path; this scenario writes a real-shaped JSONL fixture and
+// probes the deployed bytes against it.
+async function scenarioInstalledHookClassifiesTranscript() {
+  console.log("\n=== Scenario 4: installed hook classifies prompts via transcript metadata (v6.1) ===");
+  const sandbox = makeSandbox();
+  const result = runInstaller(sandbox);
+  check("installer exit 0",
+    result.status === 0,
+    `exit ${result.status}; stderr: ${(result.stderr || "").slice(0, 200)}`);
+
+  const installedHook = installedPath(sandbox, "hooks", "english-coach-prompt-submit.js");
+  if (!fs.existsSync(installedHook)) {
+    check("installed hook exists (prerequisite)", false, `not found at ${installedHook}`);
+    return;
+  }
+
+  // Build a 2-entry transcript: one human-marked prompt, one isMeta:true
+  // auto-resume. Both have non-CJK English text long enough to pass sanity
+  // rules so we exercise the transcript codepath.
+  const humanPrompt = "can you help me wire up the deploy job for staging please end to end";
+  const autoResumePrompt = "Continue from where you left off this is a long enough sentence";
+  const transcriptEntries = [
+    {
+      type: "user",
+      isMeta: false,
+      isSidechain: false,
+      userType: "external",
+      message: { role: "user", content: [{ type: "text", text: humanPrompt }] }
+    },
+    {
+      type: "user",
+      isMeta: true,
+      isSidechain: false,
+      userType: "external",
+      message: { role: "user", content: [{ type: "text", text: autoResumePrompt }] }
+    }
+  ];
+  const txDir = fs.mkdtempSync(path.join(os.tmpdir(), "ecc-install-tx-"));
+  const transcriptPath = path.join(txDir, "session.jsonl");
+  fs.writeFileSync(transcriptPath, transcriptEntries.map(e => JSON.stringify(e)).join("\n") + "\n");
+
+  // Probe 1: human prompt with matching transcript entry -> emit
+  const humanRun = await runHookSubprocess(installedHook, {
+    prompt: humanPrompt,
+    transcript_path: transcriptPath
+  });
+  check("installed hook: human prompt with matching transcript entry emits coaching",
+    humanRun.code === 0 && humanRun.stdout.includes("hookSpecificOutput") && humanRun.stdout.includes("additionalContext"),
+    `code=${humanRun.code}; stdout head: ${humanRun.stdout.slice(0, 200)}`);
+
+  // Probe 2: prompt matches the isMeta:true entry -> skip
+  const autoRun = await runHookSubprocess(installedHook, {
+    prompt: autoResumePrompt,
+    transcript_path: transcriptPath
+  });
+  check("installed hook: prompt matching isMeta:true entry triggers skip",
+    autoRun.code === 0 && autoRun.stdout.length === 0,
+    `code=${autoRun.code}; stdout: ${JSON.stringify(autoRun.stdout.slice(0, 200))}`);
+
+  // Probe 3: prompt with no matching entry -> default-allow -> emit
+  const noMatchRun = await runHookSubprocess(installedHook, {
+    prompt: "this prompt does not match any transcript entry default allow path verified",
+    transcript_path: transcriptPath
+  });
+  check("installed hook: prompt with no matching entry defaults to allow (emit)",
+    noMatchRun.code === 0 && noMatchRun.stdout.includes("hookSpecificOutput"),
+    `code=${noMatchRun.code}; stdout head: ${noMatchRun.stdout.slice(0, 200)}`);
+
+  console.log(`  sandbox: ${sandbox}`);
+  console.log(`  transcript: ${transcriptPath}`);
+}
+
 // --- main ------------------------------------------------------------------
 
 async function main() {
@@ -215,6 +290,7 @@ async function main() {
   await scenarioFreshInstall();
   await scenarioVocabPreserved();
   await scenarioInstalledHookRuns();
+  await scenarioInstalledHookClassifiesTranscript();
 
   console.log("");
   console.log(`${passed} passed, ${failed} failed, ${passed + failed} total`);
