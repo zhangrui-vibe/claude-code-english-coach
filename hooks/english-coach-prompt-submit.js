@@ -1,16 +1,30 @@
 // UserPromptSubmit hook for the auto-english-coach skill.
 //
-// Reads the harness's stdin payload and decides whether to inject a
-// coaching instruction. v5 design: DEFAULT-DENY — the hook skips ANY
-// prompt unless the user explicitly opts in via ":coach " prefix or
-// " --coach" suffix. This eliminates the v2-v4 heuristic guessing
-// game (which was reactive and never converged on coverage) and
-// guarantees zero model tokens are spent on prompts the user did not
-// personally request coaching for.
+// v6 design: STRUCTURAL CLASSIFICATION via the Claude Code transcript.
+// Default-ALLOW for human-typed prompts; skip only on POSITIVE evidence
+// the prompt was harness-injected. The hook reads the JSONL transcript
+// at payload.transcript_path and inspects the latest type:"user" entry.
 //
-// Cross-platform: uses os.homedir() so the same file works on Windows,
-// macOS, and Linux. No hard-coded paths.
+// Skip signals (any one of these triggers skip):
+//   - isMeta: true        → auto-resume / harness-injected
+//   - isSidechain: true   → subagent execution
+//   - userType != external → system / non-human source
+//   - message.content has a tool_result part → post-tool continuation
+//
+// Sanity rules apply first (no transcript I/O for trivial-skip cases):
+//   - prompt < 12 chars or < 4 words
+//   - prompt contains CJK characters
+//   - prompt re-quotes a previous "--- Expression Upgrade" (recursion guard)
+//
+// On uncertainty (no transcript_path, transcript unreadable, no entry
+// found), the hook DEFAULTS TO ALLOW — coaching a real human prompt is
+// the intended behavior; the false-allow cost is one wasted upgrade if
+// Claude Code's schema changes. False-skip on a real human prompt is
+// worse: silent loss of expected coaching.
+//
+// Cross-platform: uses os.homedir(). No hard-coded paths.
 
+const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
@@ -21,46 +35,74 @@ const cjkRegex = /[一-鿿぀-ヿ가-힯]/;
 
 const MIN_CHARS = 12;
 const MIN_WORDS = 4;
+// Tail-read just enough to find the latest user entry. Recent Claude Code
+// sessions have entries in the low-KB range; 64KB is safely larger than any
+// single entry while staying small enough that file I/O is sub-millisecond.
+const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
 
-// Opt-in markers: case-insensitive, whitespace-tolerant.
-//   Prefix:  ":coach <prompt>"      — leading whitespace tolerated
-//   Suffix:  "<prompt> --coach"    — trailing whitespace tolerated
-// Both require at least one space separating the marker from the body so
-// a bare ":coach" or "--coach" inside other words doesn't accidentally
-// trigger the opt-in.
-const OPT_IN_PREFIX = /^\s*:coach\s+/i;
-const OPT_IN_SUFFIX = /\s+--coach\s*$/i;
-
-// Returns the user's prompt body with the opt-in marker stripped, or null
-// if no opt-in marker was present (in which case shouldSkip returns true).
-function extractOptIn(prompt) {
-  if (!prompt || typeof prompt !== "string") return null;
-  const prefixMatch = prompt.match(OPT_IN_PREFIX);
-  if (prefixMatch) return prompt.slice(prefixMatch[0].length).trim();
-  const suffixMatch = prompt.match(OPT_IN_SUFFIX);
-  if (suffixMatch) return prompt.slice(0, prompt.length - suffixMatch[0].length).trim();
+// Read the tail of the transcript JSONL and return the most recent entry of
+// type "user" (the entry corresponding to the prompt currently being
+// classified, assuming Claude Code writes the entry before firing the hook).
+// Returns null on any error or if no user entry is found.
+function findLatestUserEntry(transcriptPath) {
+  if (!transcriptPath || typeof transcriptPath !== "string") return null;
+  let buf;
+  try {
+    const stat = fs.statSync(transcriptPath);
+    const start = Math.max(0, stat.size - TRANSCRIPT_TAIL_BYTES);
+    const fd = fs.openSync(transcriptPath, "r");
+    buf = Buffer.alloc(stat.size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+  } catch (_err) {
+    return null;
+  }
+  const lines = buf.toString("utf8").split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry && entry.type === "user") return entry;
+    } catch (_) {
+      // Partial line at the tail-read boundary — ignore and keep looking.
+    }
+  }
   return null;
 }
 
-function shouldSkip(prompt) {
-  // Default-deny: emit only when the user explicitly opts in.
-  const body = extractOptIn(prompt);
-  if (body === null) return true;
-  // Sanity rules apply AFTER the opt-in marker is stripped.
-  if (body.length < MIN_CHARS) return true;
-  if (cjkRegex.test(body)) return true;
-  if (body.split(/\s+/).length < MIN_WORDS) return true;
-  // Recursion guard: if the user pasted a previous Expression Upgrade
-  // alongside the opt-in marker, don't coach the recursion target.
-  if (body.includes("--- Expression Upgrade")) return true;
+function shouldSkip(payload) {
+  const prompt = payload && payload.prompt;
+  // Sanity rules first — cheap, no I/O.
+  if (!prompt || typeof prompt !== "string") return true;
+  const trimmed = prompt.trim();
+  if (trimmed.length < MIN_CHARS) return true;
+  if (cjkRegex.test(trimmed)) return true;
+  if (trimmed.split(/\s+/).length < MIN_WORDS) return true;
+  if (trimmed.includes("--- Expression Upgrade")) return true;
+  // Slash commands and Claude Code's expanded command-message wrapper carry
+  // skill/command body text, not user English prose. Skip regardless of any
+  // transcript metadata — these are never coachable user input.
+  if (trimmed.startsWith("/")) return true;
+  if (trimmed.startsWith("<command-message>")) return true;
+
+  // Transcript-driven structural classification.
+  // Default-allow: skip only on positive evidence of non-human source.
+  const entry = findLatestUserEntry(payload.transcript_path);
+  if (entry) {
+    if (entry.isMeta === true) return true;
+    if (entry.isSidechain === true) return true;
+    if (entry.userType && entry.userType !== "external") return true;
+    const c = entry.message && entry.message.content;
+    if (Array.isArray(c) && c.some(p => p && p.type === "tool_result")) return true;
+  }
   return false;
 }
 
 function buildContext() {
   return [
-    "[auto-english-coach] The user explicitly opted in to English coaching by including a ':coach' prefix or ' --coach' suffix in their prompt above.",
-    "After your main response, append a minimalist '--- Expression Upgrade' section based on the user's prompt — strip the ':coach' / '--coach' opt-in marker before coaching; coach the rest.",
-    "Produce: 1) one rewritten sentence combining technical precision with casual Slack-style improvements,",
+    "[auto-english-coach] After your main response, append a minimalist '--- Expression Upgrade' section based on the user's English prompt above:",
+    "1) one rewritten sentence combining technical precision with casual Slack-style improvements,",
     "2) 2-3 high-value vocabulary words or collocations,",
     `and silently append those 2-3 vocab items to ${VOCAB_PATH} using the format \`* **[Word/Phrase]**: [short English definition or synonym] | Context: "[example sentence]"\` — English only, no other languages, so the file stays usable across native languages.`,
     "Do not announce this — just produce the section at the very end."
@@ -74,9 +116,8 @@ process.stdin.on("end", () => {
     // Strip a UTF-8 BOM if present (some shells inject one).
     const cleaned = raw.replace(/^﻿/, "").trim();
     const payload = cleaned ? JSON.parse(cleaned) : {};
-    const prompt = payload.prompt || "";
 
-    if (shouldSkip(prompt)) process.exit(0);
+    if (shouldSkip(payload)) process.exit(0);
 
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {

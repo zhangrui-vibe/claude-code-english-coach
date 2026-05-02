@@ -180,13 +180,14 @@ async function scenarioInstalledHookRuns() {
     return;
   }
 
-  // v5: hook is default-deny; English prompt emits ONLY when the user opts in
-  // via the ':coach ' prefix. This validates that the installed hook honors
-  // the opt-in protocol end-to-end (not just shouldSkip in isolation).
+  // v6: hook is default-allow; a plain English prompt with no transcript_path
+  // emits because the hook can't prove agent-injection without metadata. This
+  // validates that the installed hook honors the v6 contract end-to-end (not
+  // just shouldSkip in isolation).
   const emitRun = await runHookSubprocess(installedHook, {
-    prompt: ":coach can you help me wire up the deploy job for staging please"
+    prompt: "can you help me wire up the deploy job for staging please"
   });
-  check("installed hook: opted-in English prompt emits valid additionalContext",
+  check("installed hook: plain English prompt emits valid additionalContext (v6 default-allow)",
     emitRun.code === 0 && emitRun.stdout.includes("hookSpecificOutput") && emitRun.stdout.includes("additionalContext"),
     `code=${emitRun.code}; stdout head: ${emitRun.stdout.slice(0, 200)}`);
 
