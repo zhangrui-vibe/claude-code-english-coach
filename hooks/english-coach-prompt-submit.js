@@ -1,9 +1,12 @@
 // UserPromptSubmit hook for the auto-english-coach skill.
 //
-// v6 design: STRUCTURAL CLASSIFICATION via the Claude Code transcript.
+// v6.1 design: STRUCTURAL CLASSIFICATION via the Claude Code transcript.
 // Default-ALLOW for human-typed prompts; skip only on POSITIVE evidence
 // the prompt was harness-injected. The hook reads the JSONL transcript
-// at payload.transcript_path and inspects the latest type:"user" entry.
+// at payload.transcript_path and locates the type:"user" entry whose
+// extracted text matches the current prompt (NOT just the latest entry —
+// that v6 approach broke when the latest entry was a tool_result re-injection
+// or when the harness wrote the new entry after firing the hook).
 //
 // Skip signals (any one of these triggers skip):
 //   - isMeta: true        → auto-resume / harness-injected
@@ -40,12 +43,31 @@ const MIN_WORDS = 4;
 // single entry while staying small enough that file I/O is sub-millisecond.
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
 
-// Read the tail of the transcript JSONL and return the most recent entry of
-// type "user" (the entry corresponding to the prompt currently being
-// classified, assuming Claude Code writes the entry before firing the hook).
-// Returns null on any error or if no user entry is found.
-function findLatestUserEntry(transcriptPath) {
+// Returns the user-authored text of the entry as a single trimmed string,
+// or null if the entry has no extractable text content (e.g. tool_result-only).
+// Handles both string content and array-of-parts content, joining all
+// "text"-typed parts in order.
+function extractText(entry) {
+  const c = entry && entry.message && entry.message.content;
+  if (typeof c === "string") return c.trim();
+  if (Array.isArray(c)) {
+    const texts = c
+      .filter(p => p && p.type === "text" && typeof p.text === "string")
+      .map(p => p.text);
+    if (texts.length > 0) return texts.join("").trim();
+  }
+  return null;
+}
+
+// Read the tail of the transcript JSONL and return the type:"user" entry
+// whose extracted text equals `promptText` (after trim), or null if no
+// match. Content-matching avoids the v6 bug where the latest entry might
+// be a tool_result re-injection or a stale prior-turn entry that doesn't
+// correspond to the prompt being classified.
+function findEntryForPrompt(transcriptPath, promptText) {
   if (!transcriptPath || typeof transcriptPath !== "string") return null;
+  if (!promptText || typeof promptText !== "string") return null;
+  const target = promptText.trim();
   let buf;
   try {
     const stat = fs.statSync(transcriptPath);
@@ -63,7 +85,9 @@ function findLatestUserEntry(transcriptPath) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry && entry.type === "user") return entry;
+      if (!entry || entry.type !== "user") continue;
+      const text = extractText(entry);
+      if (text && text === target) return entry;
     } catch (_) {
       // Partial line at the tail-read boundary — ignore and keep looking.
     }
@@ -88,7 +112,10 @@ function shouldSkip(payload) {
 
   // Transcript-driven structural classification.
   // Default-allow: skip only on positive evidence of non-human source.
-  const entry = findLatestUserEntry(payload.transcript_path);
+  // Content-match the prompt to its transcript entry (v6.1) instead of
+  // taking the latest type:"user" entry (v6, which mis-fired on tool_result
+  // interleaving and on hook-fires-before-write timing).
+  const entry = findEntryForPrompt(payload.transcript_path, payload.prompt);
   if (entry) {
     if (entry.isMeta === true) return true;
     if (entry.isSidechain === true) return true;

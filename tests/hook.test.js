@@ -119,56 +119,59 @@ const tests = [
 
   // === Transcript-driven SKIP cases ===
   {
-    name: "transcript last user-entry has isMeta=true -> skip (auto-resume)",
+    name: "transcript user-entry matched by content has isMeta=true -> skip (auto-resume)",
     transcript: [
       {
         type: "user",
         isMeta: true,
         isSidechain: false,
         userType: "external",
-        message: { role: "user", content: [{ type: "text", text: "Continue from where you left off." }] }
+        message: { role: "user", content: [{ type: "text", text: "Continue from where you left off this is a long enough prompt" }] }
       }
     ],
     payload: { prompt: "Continue from where you left off this is a long enough prompt" },
     expect: "skip"
   },
   {
-    name: "transcript last user-entry has isSidechain=true -> skip (subagent execution)",
+    name: "transcript user-entry matched by content has isSidechain=true -> skip (subagent execution)",
     transcript: [
       {
         type: "user",
         isSidechain: true,
         userType: "external",
-        message: { role: "user", content: [{ type: "text", text: "subagent task content" }] }
+        message: { role: "user", content: [{ type: "text", text: "subagent task content please run this analysis end to end" }] }
       }
     ],
     payload: { prompt: "subagent task content please run this analysis end to end" },
     expect: "skip"
   },
   {
-    name: "transcript last user-entry has userType != external -> skip",
+    name: "transcript user-entry matched by content has userType != external -> skip",
     transcript: [
       {
         type: "user",
         isSidechain: false,
         userType: "system",
-        message: { role: "user", content: [{ type: "text", text: "system-generated prompt body" }] }
+        message: { role: "user", content: [{ type: "text", text: "system-generated prompt body that is long enough for sanity rules" }] }
       }
     ],
     payload: { prompt: "system-generated prompt body that is long enough for sanity rules" },
     expect: "skip"
   },
   {
-    name: "transcript last user-entry has tool_result content -> skip (post-tool continuation)",
+    name: "transcript user-entry has mixed content (text + tool_result) -> skip (defense in depth)",
     transcript: [
       {
         type: "user",
         isSidechain: false,
         userType: "external",
-        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_xyz" }] }
+        message: { role: "user", content: [
+          { type: "text", text: "mixed content prompt body for the defense-in-depth test" },
+          { type: "tool_result", tool_use_id: "toolu_xyz" }
+        ] }
       }
     ],
-    payload: { prompt: "tool result re-injection text long enough for sanity rules to pass" },
+    payload: { prompt: "mixed content prompt body for the defense-in-depth test" },
     expect: "skip"
   },
 
