@@ -27,30 +27,26 @@ function runHook(payload) {
 }
 
 const tests = [
-  // --- Baseline: behaviors that must keep working ---
+  // --- v5 default-deny: ANY prompt without an opt-in marker skips ---
+  // Note: the v2-v4 content heuristics are gone. The hook no longer tries
+  // to guess agent-vs-human from the prompt; instead it skips by default and
+  // emits only when the user explicitly opts in via ":coach " prefix or
+  // " --coach" suffix.
   {
-    name: "pure English prompt -> emits coaching context",
+    name: "plain English prompt without opt-in -> skip (default-deny)",
     payload: { prompt: "can you help me wire up the deploy job for staging" },
-    expect: "emit"
-  },
-  {
-    name: "pure CJK prompt -> skip",
-    payload: { prompt: "帮我把 staging 的部署任务接好" },
     expect: "skip"
   },
   {
-    name: "mixed CJK+English prompt -> skip",
-    payload: { prompt: "please 帮我 review the deploy script for staging" },
+    name: "long English prompt without opt-in -> skip",
+    payload: {
+      prompt: "I have been thinking about how we should structure the deployment pipeline for our staging environment and there are several angles to consider here. ".repeat(13)
+    },
     expect: "skip"
   },
   {
-    name: "short prompt under 12 chars -> skip",
-    payload: { prompt: "go ahead" },
-    expect: "skip"
-  },
-  {
-    name: "fewer than 4 words -> skip",
-    payload: { prompt: "this is fine" },
+    name: "slash command without opt-in -> skip",
+    payload: { prompt: "/everything-claude-code:tdd-workflow please do X" },
     expect: "skip"
   },
   {
@@ -64,120 +60,88 @@ const tests = [
     expect: "skip"
   },
 
-  // --- New: slash-command skip (the slash body is not user-authored English) ---
+  // --- v5 default-deny: regression cases that v2-v4 cared about all skip
+  // automatically now, no special rule needed ---
   {
-    name: "slash command with no args -> skip",
-    payload: { prompt: "/everything-claude-code:tdd-workflow" },
+    name: "smoking-gun heartbeat agent ping without opt-in -> skip",
+    payload: { prompt: "Heartbeat 10: 3/96 still. 10 min on RB888/3min cell. Holding pattern. Still waiting on your call between A/B/C/D." },
     expect: "skip"
   },
   {
-    name: "slash command with English args -> skip",
-    payload: { prompt: "/everything-claude-code:tdd-workflow please make the english coach skip slash commands" },
-    expect: "skip"
-  },
-  {
-    name: "slash command with leading whitespace -> skip",
-    payload: { prompt: "   /clear and start fresh on this branch" },
-    expect: "skip"
-  },
-
-  // --- New: re-quoted prior coach output (recursion / loop guard) ---
-  {
-    name: "prompt that quotes a previous Expression Upgrade -> skip",
-    payload: {
-      prompt: [
-        "here is the previous reply for context:",
-        "",
-        "--- Expression Upgrade",
-        "* Better phrasing: please ship the deploy",
-        "* Key vocab logged: ship, deploy, staging"
-      ].join("\n")
-    },
-    expect: "skip"
-  },
-
-  // --- New v2: pasted agent text + code-/quote-dominated prompts ---
-  {
-    name: "long prompt with agent-pattern marker -> skip",
-    payload: {
-      prompt: "some context here that goes on for a while. ".repeat(38) + "My recommendation: B then D."
-    },
-    expect: "skip"
-  },
-  {
-    name: "prompt dominated by code block -> skip",
-    payload: {
-      prompt: "what does this do?\n```js\n" + "function example(arg) { return arg + 1; }\n".repeat(20) + "```"
-    },
-    expect: "skip"
-  },
-  {
-    name: "prompt dominated by markdown blockquote -> skip",
-    payload: {
-      prompt: [
-        "> The observer-enabled mode burns Haiku tokens every 5 minutes.",
-        "> If you don't want background spending, leave enabled false.",
-        "> My recommendation: B then D — fix the silent failure first.",
-        "> Then list known projects to confirm the registry.",
-        "> The ROI of full auto-learning is real but only if observations land.",
-        "> Which path do you want to take?",
-        "> Want me to dig into the silent observation-capture failure?",
-        "> Or look at the project-scoped instincts registry instead?",
-        "thoughts?"
-      ].join("\n")
-    },
-    expect: "skip"
-  },
-
-  // --- New v2: regression guards (small code or long user prose still emits) ---
-  {
-    name: "short user question with small code snippet -> emit",
-    payload: {
-      prompt: "can you explain what this snippet does in our context?\n```js\nfoo();\n```"
-    },
-    expect: "emit"
-  },
-  {
-    name: "long user prose without agent markers -> emit",
-    payload: {
-      prompt: "I have been thinking about how we should structure the deployment pipeline for our staging environment and there are several angles to consider here. ".repeat(13)
-    },
-    expect: "emit"
-  },
-
-  // --- New v3: short pasted-agent paragraphs caught by multi-marker count ---
-  // Smoking-gun reproducer: the verbatim continuous-learning-v2 agent paragraph
-  // the user reported. ~530 chars (under LONG_PROMPT_CHARS=1500), but contains
-  // three distinct markers (My recommendation:, Which path do you want, burns
-  // Haiku tokens). Should skip because of multi-marker presence.
-  {
-    name: "short pasted agent paragraph with multiple markers -> skip",
+    name: "smoking-gun continuous-learning agent paragraph without opt-in -> skip",
     payload: {
       prompt: [
         "The observer-enabled mode burns Haiku tokens every 5 minutes analyzing observations. If you don't want background spending, leave enabled: false and rely on manual instinct creation.",
         "",
-        "My recommendation: B then D. Fix the silent observation-capture failure first (otherwise enabling the analyzer just runs on empty input), then list known projects to confirm the registry. The ROI of full auto-learning is real but only if observations actually land on disk. Which path do you want to take?"
+        "My recommendation: B then D. Fix the silent observation-capture failure first, then list known projects to confirm the registry. Which path do you want to take?"
       ].join("\n")
     },
     expect: "skip"
   },
-  // Regression guard: a single accidental marker in a short user prompt should
-  // NOT trigger skip — only multi-marker prompts do.
   {
-    name: "short user prompt with single accidental marker -> emit",
-    payload: {
-      prompt: "yo, my recommendation: let's just push this through tomorrow morning and see what breaks"
-    },
+    name: "code-block-dominant prompt without opt-in -> skip",
+    payload: { prompt: "what does this do?\n```js\n" + "function example(arg) { return arg + 1; }\n".repeat(20) + "```" },
+    expect: "skip"
+  },
+  {
+    name: "post-compaction auto-resume 'Continue from where you left off.' -> skip",
+    payload: { prompt: "Continue from where you left off." },
+    expect: "skip"
+  },
+
+  // --- v5 opt-in: ":coach " prefix emits coaching for the rest of the prompt ---
+  {
+    name: ":coach prefix + English -> emit",
+    payload: { prompt: ":coach can you help me wire up the deploy job for staging" },
     expect: "emit"
   },
-  // Polish (post-review): verify "leave X: false" with a colon is matched by
-  // the relaxed marker pattern — was missed by the stricter \w_- character
-  // class. Combined with "My recommendation:", count reaches >=2 -> skip.
   {
-    name: "two markers including 'leave X: false' with colon -> skip",
-    payload: {
-      prompt: "My recommendation: just leave enabled: false in production for now"
-    },
+    name: ":COACH prefix is case-insensitive -> emit",
+    payload: { prompt: ":COACH can you help me wire up the deploy job" },
+    expect: "emit"
+  },
+  {
+    name: "leading whitespace before :coach is tolerated -> emit",
+    payload: { prompt: "   :coach can you help me wire up the deploy job" },
+    expect: "emit"
+  },
+
+  // --- v5 opt-in: " --coach" suffix is the alternate trigger ---
+  {
+    name: "--coach suffix + English -> emit",
+    payload: { prompt: "can you help me wire up the deploy job for staging --coach" },
+    expect: "emit"
+  },
+  {
+    name: "--COACH suffix is case-insensitive, trailing whitespace tolerated -> emit",
+    payload: { prompt: "can you help me wire up the deploy job --COACH   " },
+    expect: "emit"
+  },
+
+  // --- v5 sanity rules still apply AFTER stripping the opt-in marker ---
+  {
+    name: ":coach + CJK body -> skip (CJK rule still applies after strip)",
+    payload: { prompt: ":coach 帮我把 staging 的部署任务接好" },
+    expect: "skip"
+  },
+  {
+    name: ":coach + too-short body (<12 chars) -> skip",
+    payload: { prompt: ":coach yes do" },
+    expect: "skip"
+  },
+  {
+    name: ":coach + too-few-words body (<4 words) -> skip",
+    payload: { prompt: ":coach this is fine" },
+    expect: "skip"
+  },
+  {
+    name: ":coach with no body at all -> skip",
+    payload: { prompt: ":coach" },
+    expect: "skip"
+  },
+  {
+    name: ":coach + previously-generated Expression Upgrade -> skip (recursion guard)",
+    payload: { prompt: ":coach --- Expression Upgrade\n* Better phrasing: ship the deploy\n* Key vocab logged: ship, deploy, staging" },
     expect: "skip"
   }
 ];
