@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Hook unit tests
+        run: node tests/hook.test.js
+
+      - name: Install pipeline E2E (install.sh path)
+        run: node tests/install.test.js
