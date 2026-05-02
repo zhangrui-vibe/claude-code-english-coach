@@ -2,18 +2,18 @@
 
 An English coaching skill for AI coding assistants. Native install for **[Claude Code](https://claude.com/claude-code)**; porting notes included for **Codex**, **Antigravity**, and **OpenCode** at the bottom.
 
-A pair of skills that quietly improve your English while you vibe-code. The coach watches your prompts, suggests one upgraded phrasing per turn, and logs vocabulary to a single Markdown file. A separate reviewer turns that file into recall quizzes when you want to practice.
+A pair of skills that improve your English while you vibe-code, but only when you ask. The coach fires **only when you opt in** with a `:coach` prefix or `--coach` suffix in your prompt — every other prompt is skipped silently and costs zero model tokens. A separate reviewer turns your accumulated vocab into recall quizzes when you want to practice.
 
-> **Search keywords:** Claude Code skill, Claude Code hook, vibe coding English tutor, AI coding assistant English coach, Codex English helper, Antigravity skill, OpenCode plugin, vocabulary tracker for AI coding tools.
+> **Search keywords:** Claude Code skill, Claude Code hook, vibe coding English tutor, AI coding assistant English coach, Codex English helper, Antigravity skill, OpenCode plugin, vocabulary tracker for AI coding tools, opt-in language coaching.
 
 ```
-You ask Claude something          Claude solves it as usual           At the end of the reply
+You type ":coach <your prompt>"   Claude solves it as usual           At the end of the reply
         |                                  |                                   v
         v                                  v                          --- Expression Upgrade
 [ UserPromptSubmit hook ]  ----injects---->                           * Better phrasing: ...
-                                                                      * Key vocab logged: ...
-                                                                                |
-                                                                                v
+        | (only if :coach / --coach                                    * Key vocab logged: ...
+        |  marker is present —                                                  |
+        |  default-deny otherwise)                                              v
                                                                       ~/.claude/english/vocab.md
 ```
 
@@ -21,24 +21,31 @@ You ask Claude something          Claude solves it as usual           At the end
 
 | Component | What it does | When it runs |
 |---|---|---|
-| `auto-english-coach` skill | Appends a one-line "Expression Upgrade" to every meaningful English prompt and silently logs 2-3 vocab items | Auto, via the hook |
+| `auto-english-coach` skill | Appends a one-line "Expression Upgrade" and silently logs 2-3 vocab items | When the hook detects the `:coach` / `--coach` opt-in marker |
 | `english-reviewer` skill | Picks 5 random items from your vocab log and runs an interactive recall quiz (fill-in-the-blank + production prompts) | On demand — invoke it manually |
-| `english-coach-prompt-submit.js` hook | Inspects each prompt; injects coaching instructions into Claude's context only when the prompt is real English worth coaching | UserPromptSubmit |
+| `english-coach-prompt-submit.js` hook | Default-deny: skips every prompt unless it carries an opt-in marker, then strips the marker and emits coaching instructions for the rest | UserPromptSubmit |
 
-## Skip rules (reduce noise)
+## How to invoke (opt-in)
 
-The hook stays quiet when the prompt is:
-- Shorter than 12 characters or fewer than 4 words ("yes", "go ahead", "ok thanks")
-- Pure CJK (Chinese / Japanese / Korean — falls through to your normal Claude flow), or contains any CJK characters
-- A slash command (starts with `/`, e.g. `/clear` or `/some-skill args`) — the slash body is a skill / command template, not your writing
-- A re-submitted `--- Expression Upgrade` section (recursion / quoting guard)
-- Long (>1500 chars) and contains agent-style phrasing ("My recommendation:", "Which path do you want", "wrapped —", "guarded behind", etc.) — likely pasted agent output
-- Contains two or more distinct agent-style markers regardless of length — short pasted agent paragraphs (a single accidental marker in casual user phrasing still emits)
-- More than 50% inside triple-backtick code blocks — you're pasting code, not writing English
-- More than 30% of non-empty lines start with `> ` — you're quoting prior text
-- Malformed input
+Add one of two markers to a prompt you want coached. Everything else stays untouched.
 
-You can tune these thresholds in [hooks/english-coach-prompt-submit.js](hooks/english-coach-prompt-submit.js). The model is also instructed to coach only the user's own authored English within an otherwise-eligible prompt — so pasted code, log lines, or quoted agent text inside your prompt will not show up in the upgrade section.
+```
+:coach can you wire up the deploy job for staging?
+```
+
+```
+can you wire up the deploy job for staging? --coach
+```
+
+Both markers are case-insensitive and tolerate leading/trailing whitespace. The marker is stripped before the rest of the prompt is coached, so the model never sees `:coach` itself in the upgrade output.
+
+The hook still skips silently — even with an opt-in marker — when, after stripping the marker, the body is:
+
+- Shorter than 12 characters or fewer than 4 words
+- Pure CJK (Chinese / Japanese / Korean)
+- A re-quote of a previous `--- Expression Upgrade` section (recursion guard)
+
+Outside those sanity rules the design is structural: **no marker → no coaching → zero tokens spent**. There are no content heuristics. Agent-generated prompts (autonomous loops, scheduled cron ticks, post-compaction "Continue from where you left off" auto-resumes, subagent invocations) are skipped automatically because none of them carry the opt-in marker. You can tune the markers and sanity thresholds in [hooks/english-coach-prompt-submit.js](hooks/english-coach-prompt-submit.js).
 
 ## Install
 
@@ -65,11 +72,17 @@ The installer copies the three skill/hook files into your Claude Code home (`~/.
 
 ## Verify
 
-After install, open Claude Code in any project and ask something substantial in English (≥4 words). The reply should end with a `--- Expression Upgrade` section and the new vocab should show up in `~/.claude/english/vocab.md`.
+After install, open Claude Code in any project and ask something substantial in English **with an opt-in marker** — for example:
 
-If nothing happens:
+```
+:coach can you summarize what this repo does in one paragraph?
+```
+
+The reply should end with a `--- Expression Upgrade` section and a new vocab entry should show up in `~/.claude/english/vocab.md`. A plain prompt without `:coach` or `--coach` should produce no upgrade section at all (that's the v5 default-deny posture).
+
+If nothing happens on a marker-carrying prompt:
 - Run `/hooks` to force a settings reload.
-- Confirm the script is executable: `node ~/.claude/hooks/english-coach-prompt-submit.js < /dev/null` (should exit 0 silent).
+- Confirm the script runs cleanly: `node ~/.claude/hooks/english-coach-prompt-submit.js < /dev/null` (should exit 0 silent — that's correct, since stdin is empty).
 - Ensure no project-level `.claude/settings.json` is replacing the global `UserPromptSubmit` array.
 
 ## Practicing your accumulated vocab
@@ -96,8 +109,9 @@ If you'd rather log in your own native language for personal use, edit `buildCon
 
 ## Architecture notes
 
-- **Why UserPromptSubmit (and not Stop)?** A `Stop` hook that re-prompts the model causes loops because the harness re-fires Stop after each block, and detecting "already coached" via transcript-tail scan is racy. UserPromptSubmit fires exactly once per real user message and injects the instruction *before* the response, baking the upgrade into the main reply.
-- **Why a Node script and not a one-line shell command?** Cross-platform (Windows + macOS + Linux), avoids quoting hell when embedded in JSON, easy to extend with detection rules.
+- **Why opt-in (`:coach`/`--coach`) instead of automatic content heuristics?** Earlier versions tried to skip agent-generated prompts by guessing from content — long-prompt-plus-marker regex, code-block ratios, blockquote ratios, multi-marker counts, etc. That approach was reactive and never converged on coverage: every new agent class (autonomous loops, schedule cron ticks, heartbeat ops pings, post-compaction auto-resumes) required another patch, and tokens kept getting wasted in the gaps. v5 flips the default: the hook skips by default and emits only when the user includes an explicit marker. Failure mode is silent (no upgrade, free) instead of polluting (coached agent prose, paid).
+- **Why UserPromptSubmit (and not Stop)?** A `Stop` hook that re-prompts the model causes loops because the harness re-fires Stop after each block, and detecting "already coached" via transcript-tail scan is racy. UserPromptSubmit fires exactly once per user message and injects the instruction *before* the response, baking the upgrade into the main reply.
+- **Why a Node script and not a one-line shell command?** Cross-platform (Windows + macOS + Linux), avoids quoting hell when embedded in JSON, easy to extend.
 - **Why a single global vocab file?** Lets practice span every project you work on. If you want per-project logs, change `VOCAB_PATH` in the hook script to a relative path.
 
 The original one-shot setup prompt that kicked off this project is preserved as historical context at [docs/original-spec.md](docs/original-spec.md), with notes on why the implementation diverged.
@@ -111,7 +125,7 @@ Tested on:
 ## Limitations
 
 - The hook injects instructions; the model still has to follow them. Occasionally on long, complex turns Claude may forget the upgrade section. Re-prompt with "and the upgrade?" if it matters.
-- The skip heuristics are word-count and CJK-based — they don't catch mixed-language prompts (English with one phrase in another script) or technically-perfect-but-stylistically-clumsy English. PRs welcome.
+- Opt-in is explicit by design — you have to remember to add `:coach` or `--coach`. That tradeoff is intentional (it eliminates token waste on non-human prompts) but it means the coach won't catch every prompt you might have wanted reviewed. Re-submit with a marker if you change your mind.
 - `~/.claude/english/vocab.md` is shared across projects. If two Claude Code sessions write at exactly the same moment you can lose an entry. In practice the window is microseconds and hasn't been observed in real use.
 
 ## Porting to other AI coding tools
@@ -121,8 +135,8 @@ The two SKILL.md files are pure prompt content — they describe *what* the mode
 | Tool | Status | How to port |
 |---|---|---|
 | **Claude Code** | Native | `UserPromptSubmit` hook in `~/.claude/settings.json`. See [install.sh](install.sh) / [install.ps1](install.ps1). |
-| **Codex (OpenAI)** | Manual port | Codex doesn't have a hook event for prompt submission. Easiest path: paste the contents of `skills/auto-english-coach/SKILL.md` into your Codex `~/.codex/AGENTS.md` (or equivalent system prompt). The coach runs on every turn but you lose the auto-skip heuristics. |
-| **Antigravity (Google)** | Manual port | Treat the SKILL.md content as a custom instruction at workspace level. Skip-rule logic would need to live in the model's prompt rather than a separate hook. |
+| **Codex (OpenAI)** | Manual port | Codex doesn't have a hook event for prompt submission. Easiest path: paste the contents of `skills/auto-english-coach/SKILL.md` into your Codex `~/.codex/AGENTS.md` (or equivalent system prompt). The opt-in protocol still works — the model checks for `:coach` / `--coach` in each prompt itself, just without the hook-level guarantee. |
+| **Antigravity (Google)** | Manual port | Treat the SKILL.md content as a custom instruction at workspace level. The model checks for the opt-in marker in the prompt rather than a separate hook. |
 | **OpenCode** | Manual port | OpenCode supports custom agents and tools. Wrap [hooks/english-coach-prompt-submit.js](hooks/english-coach-prompt-submit.js) as a pre-prompt hook in the OpenCode config, or inline the SKILL.md content as a system message. |
 
 PRs adding native installers for the other three tools are very welcome — the Node hook script (`fs`, `path`, `os` only) is the portable core.
@@ -153,8 +167,8 @@ MIT — see [LICENSE](LICENSE).
 ## Contributing
 
 Issues and pull requests welcome. Especially valuable:
-- Better skip heuristics
 - Spanish / French / German variants of the coach (the architecture is language-agnostic)
+- Native installers for Codex / Antigravity / OpenCode that wire the opt-in protocol into each tool's hook equivalent
 
 Run the test harness before sending a PR:
 
