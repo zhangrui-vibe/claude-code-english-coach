@@ -1,16 +1,24 @@
 # Tests
 
-Zero-dependency tests for the `english-coach-prompt-submit.js` hook.
+Zero-dependency tests for the english-coach hook and install pipeline. No `package.json`, no `node_modules` — both harnesses use only Node's built-in `child_process` and `fs`.
 
 ## Run
+
+Hook unit tests (fast — runs the hook subprocess against synthetic JSON payloads):
 
 ```bash
 node tests/hook.test.js
 ```
 
-Exits 0 if all tests pass, 1 if any fail. No `package.json`, no `node_modules` — uses only Node's built-in `child_process`.
+Install pipeline E2E (spawns the platform-appropriate installer into a temp `$HOME` and verifies real install + run):
 
-## Adding a test
+```bash
+node tests/install.test.js
+```
+
+Both exit 0 if all assertions pass, 1 if any fail. The install test auto-detects platform (`install.ps1` on Windows, `install.sh` on macOS / Linux) and never touches your real `~/.claude/` — every sandbox is a fresh `os.tmpdir()` directory left in place after the run for debugging.
+
+## Adding a hook test
 
 Append a new entry to the `tests` array in [hook.test.js](hook.test.js):
 
@@ -23,3 +31,7 @@ Append a new entry to the `tests` array in [hook.test.js](hook.test.js):
 ```
 
 `payload` can also be a raw string (used to test malformed-JSON handling).
+
+## Adding an install scenario
+
+Add an `async function scenarioMyCase()` to [install.test.js](install.test.js) and call it from `main()`. Use the existing helpers (`makeSandbox`, `runInstaller`, `installedPath`, `runHookSubprocess`, `check`) so failures keep reporting in the same format.
