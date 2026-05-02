@@ -179,6 +179,28 @@ const tests = [
       prompt: "My recommendation: just leave enabled: false in production for now"
     },
     expect: "skip"
+  },
+
+  // --- v4: heartbeat-style agent status pings (short pastes) ---
+  // Smoking-gun: the agent loop heartbeat the user reported being coached.
+  // Only ~110 chars (under LONG_PROMPT_CHARS=1500) but contains multiple
+  // distinct heartbeat-ops markers that should trigger the multi-marker rule.
+  {
+    name: "heartbeat-style agent status with multiple markers -> skip",
+    payload: {
+      prompt: "Heartbeat 10: 3/96 still. 10 min on RB888/3min cell. Holding pattern. Still waiting on your call between A/B/C/D."
+    },
+    expect: "skip"
+  },
+  // Regression guard: a real user prompt that just mentions "heartbeat" (no
+  // digit+colon, no other markers) must still emit. Prevents the new pattern
+  // from over-firing on the bare word.
+  {
+    name: "user prompt mentioning heartbeat casually -> emit",
+    payload: {
+      prompt: "should we add a heartbeat check on the worker process so we know when it stalls"
+    },
+    expect: "emit"
   }
 ];
 
